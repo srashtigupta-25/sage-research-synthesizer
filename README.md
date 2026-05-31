@@ -140,17 +140,10 @@ cd lambdas && mvn clean package
 
 ---
 
-## Cost
-
-~$2/month for 1,000 reports. Lambda, DynamoDB, and API Gateway stay within free tier. Main cost is Bedrock (~$0.002/report with Claude Haiku 4.5).
-
----
-
 ## What I'd Build Next
 
 - Document upload — PDF/Word analysis through the same pipeline
 - Real image generation — when AWS activates Nova Canvas
-- Streaming — real-time token streaming instead of polling
 - Export to PDF — one-click download
 - Public report sharing — shareable URLs
 
