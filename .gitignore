@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build outputs
+frontend/dist/
+target/
+
+# Environment
+.env
+.env.local
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+
+# Java
+*.class
+*.jar
+
+# Backup files
+*.backup
+*.broken_backup

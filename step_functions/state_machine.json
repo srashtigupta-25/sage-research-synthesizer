@@ -1,0 +1,61 @@
+{
+  "Comment": "Sage AI Research Synthesizer Pipeline - orchestrates all 5 states",
+  "StartAt": "DecomposeQuery",
+  "States": {
+
+    "DecomposeQuery": {
+      "Type": "Task",
+      "Comment": "State 1 - breaks topic into 3 sub-questions",
+      "Resource": "arn:aws:lambda:us-east-1:758854590072:function:sage-sf-decompose",
+      "Next": "ResearchTopics"
+    },
+
+    "ResearchTopics": {
+      "Type": "Map",
+      "Comment": "State 2 - runs sage-sf-research 3 times in parallel",
+      "InputPath": "$",
+      "ItemsPath": "$.subQuestions",
+      "MaxConcurrency": 3,
+      "Parameters": {
+        "reportId.$": "$.reportId",
+        "topic.$": "$.topic",
+        "question.$": "$$.Map.Item.Value"
+      },
+      "Iterator": {
+        "StartAt": "ResearchSingleTopic",
+        "States": {
+          "ResearchSingleTopic": {
+            "Type": "Task",
+            "Comment": "Answers one sub-question using Claude",
+            "Resource": "arn:aws:lambda:us-east-1:758854590072:function:sage-sf-research",
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.researchResults",
+      "Next": "GenerateReport"
+    },
+
+    "GenerateReport": {
+      "Type": "Task",
+      "Comment": "State 3 - synthesizes research into a full report",
+      "Resource": "arn:aws:lambda:us-east-1:758854590072:function:sage-sf-generate-report",
+      "Next": "GenerateImages"
+    },
+
+    "GenerateImages": {
+      "Type": "Task",
+      "Comment": "State 4 - generates placeholder images",
+      "Resource": "arn:aws:lambda:us-east-1:758854590072:function:sage-sf-generate-images",
+      "Next": "PersistReport"
+    },
+
+    "PersistReport": {
+      "Type": "Task",
+      "Comment": "State 5 - saves everything to DynamoDB and marks COMPLETE",
+      "Resource": "arn:aws:lambda:us-east-1:758854590072:function:sage-sf-persist",
+      "End": true
+    }
+
+  }
+}
