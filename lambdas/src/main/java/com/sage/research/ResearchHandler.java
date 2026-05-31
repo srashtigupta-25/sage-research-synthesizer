@@ -9,6 +9,10 @@ import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
 import software.amazon.awssdk.services.bedrockruntime.model.InvokeModelRequest;
 import software.amazon.awssdk.services.bedrockruntime.model.InvokeModelResponse;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
 
@@ -19,6 +23,7 @@ public class ResearchHandler implements RequestHandler<Map<String, Object>, Map<
             .build();
 
     private final ObjectMapper mapper = new ObjectMapper();
+    private final HttpClient httpClient = HttpClient.newHttpClient();
     private static final String MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
 
     @Override
@@ -27,49 +32,127 @@ public class ResearchHandler implements RequestHandler<Map<String, Object>, Map<
             String question = (String) event.get("question");
             String reportId = (String) event.get("reportId");
 
-            String originalTopic = (String) event.getOrDefault("topic", "");
+            context.getLogger().log("Researching: " + question);
 
-            // CRITICAL LOGGING - tells us exactly what we receive
-            context.getLogger().log("=== RESEARCH DEBUG ===");
-            context.getLogger().log("Topic length: " + originalTopic.length());
-            context.getLogger().log("Topic starts with: " + originalTopic.substring(0, Math.min(50, originalTopic.length())));
-            context.getLogger().log("Is document: " + originalTopic.startsWith("[DOCUMENT ANALYSIS REQUEST]"));
-            context.getLogger().log("Has Document Content marker: " + originalTopic.contains("Document Content:"));
+            // Step 1 - Search web with Tavily
+            String searchContext = searchWithTavily(question, context);
 
-            String documentContent = "";
-            if (originalTopic.startsWith("[DOCUMENT ANALYSIS REQUEST]")) {
-                int contentStart = originalTopic.indexOf("Document Content:\n");
-                context.getLogger().log("Content start index: " + contentStart);
-                if (contentStart >= 0) {
-                    documentContent = originalTopic.substring(contentStart + "Document Content:\n".length());
-                    context.getLogger().log("Document content length: " + documentContent.length());
-                    context.getLogger().log("Document content preview: " + documentContent.substring(0, Math.min(100, documentContent.length())));
+            // Step 2 - Research with Claude using web results as context
+            String answer = researchWithClaude(question, searchContext, context);
+
+            context.getLogger().log("Research answer length: " + answer.length());
+
+            return Map.of(
+                "reportId", reportId,
+                "question", question,
+                "answer", answer
+            );
+
+        } catch (Exception e) {
+            context.getLogger().log("Error in research: " + e.getMessage());
+            throw new RuntimeException(e);
+        }
+    }
+
+    private String searchWithTavily(String query, Context context) {
+        try {
+            String tavilyKey = System.getenv("TAVILY_API_KEY");
+            if (tavilyKey == null || tavilyKey.isBlank()) {
+                context.getLogger().log("No Tavily key found - skipping web search");
+                return "";
+            }
+
+            // Build Tavily search request
+            Map<String, Object> tavilyRequest = Map.of(
+                "query", query,
+                "max_results", 5,
+                "search_depth", "advanced",
+                "include_answer", true
+            );
+
+            String requestBody = mapper.writeValueAsString(tavilyRequest);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://api.tavily.com/search"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + tavilyKey)
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .build();
+
+            HttpResponse<String> response = httpClient.send(
+                request, HttpResponse.BodyHandlers.ofString()
+            );
+
+            if (response.statusCode() != 200) {
+                context.getLogger().log("Tavily error: " + response.statusCode() + " " + response.body());
+                return "";
+            }
+
+            // Parse Tavily response
+            Map<String, Object> tavilyResponse = mapper.readValue(response.body(), Map.class);
+
+            StringBuilder searchContext = new StringBuilder();
+
+            // Add Tavily's direct answer if available
+            String tavilyAnswer = (String) tavilyResponse.get("answer");
+            if (tavilyAnswer != null && !tavilyAnswer.isBlank()) {
+                searchContext.append("SEARCH SUMMARY: ").append(tavilyAnswer).append("\n\n");
+            }
+
+            // Add individual search results
+            List<Map<String, Object>> results = (List<Map<String, Object>>) tavilyResponse.get("results");
+            if (results != null) {
+                searchContext.append("WEB SOURCES:\n");
+                for (int i = 0; i < Math.min(results.size(), 5); i++) {
+                    Map<String, Object> result = results.get(i);
+                    String title = (String) result.get("title");
+                    String content = (String) result.get("content");
+                    String url = (String) result.get("url");
+                    if (title != null && content != null) {
+                        searchContext.append("\nSource ").append(i + 1).append(": ").append(title).append("\n");
+                        searchContext.append("URL: ").append(url).append("\n");
+                        searchContext.append("Content: ").append(content).append("\n");
+                    }
                 }
             }
 
+            context.getLogger().log("Tavily search successful, context length: " + searchContext.length());
+            return searchContext.toString();
+
+        } catch (Exception e) {
+            context.getLogger().log("Tavily search failed: " + e.getMessage());
+            return "";
+        }
+    }
+
+    private String researchWithClaude(String question, String searchContext, Context context) {
+        try {
             String prompt;
-            if (!documentContent.isEmpty()) {
-                context.getLogger().log("Using DOCUMENT mode");
-                prompt = "You are a senior analyst. Answer this question using ONLY the provided document content.\n\n" +
+
+            if (!searchContext.isBlank()) {
+                // Use web search results as grounding
+                prompt = "You are a senior research analyst. Answer this question using " +
+                    "the provided web search results for accuracy and current information.\n\n" +
                     "Question: " + question + "\n\n" +
-                    "Rules:\n" +
-                    "- Answer based ONLY on what is in the document, not general knowledge\n" +
-                    "- Reference specific parts, functions, or sections from the document\n" +
+                    "Web Search Results:\n" + searchContext + "\n\n" +
+                    "Guidelines:\n" +
+                    "- Base your answer on the web search results above\n" +
+                    "- Include specific facts, numbers, dates from the sources\n" +
                     "- Write 3 focused paragraphs\n" +
-                    "- Be precise and specific to the actual document content\n" +
-                    "- Plain text only, no markdown, no bullet points\n\n" +
-                    "Document content:\n" + documentContent;
+                    "- Paragraph 1: Direct answer with key facts from search results\n" +
+                    "- Paragraph 2: Supporting evidence and specific details\n" +
+                    "- Paragraph 3: Context, implications, or analysis\n" +
+                    "- Plain text only, no markdown, no bullet points\n" +
+                    "- If search results contain current/recent information, prioritize it";
             } else {
-                context.getLogger().log("Using GENERAL RESEARCH mode - no document content found");
-                prompt = "You are a senior research analyst writing for an intelligent professional audience.\n\n" +
-                    "Answer this research question with depth and precision:\n" + question + "\n\n" +
+                // Fallback to Claude's training data
+                prompt = "You are a senior research analyst. Answer this question " +
+                    "with depth and precision.\n\n" +
+                    "Question: " + question + "\n\n" +
                     "Guidelines:\n" +
                     "- Write 3 focused paragraphs\n" +
-                    "- Paragraph 1: Core concept or mechanism with specific details\n" +
-                    "- Paragraph 2: Real-world implementation, examples, or evidence\n" +
-                    "- Paragraph 3: Implications, trade-offs, or advanced considerations\n" +
-                    "- Use specific facts, numbers, and named examples where possible\n" +
-                    "- Plain text only, no markdown, no bullet points, no headers";
+                    "- Use specific facts, numbers, and named examples\n" +
+                    "- Plain text only, no markdown, no bullet points";
             }
 
             Map<String, Object> requestBody = Map.of(
@@ -92,19 +175,12 @@ public class ResearchHandler implements RequestHandler<Map<String, Object>, Map<
                 response.body().asByteArray(), Map.class
             );
 
-            List<Map<String, Object>> content = (List<Map<String, Object>>) responseBody.get("content");
-            String answer = (String) content.get(0).get("text");
-
-            context.getLogger().log("Research answer length: " + answer.length());
-
-            return Map.of(
-                "reportId", reportId,
-                "question", question,
-                "answer", answer
-            );
+            List<Map<String, Object>> content =
+                (List<Map<String, Object>>) responseBody.get("content");
+            return (String) content.get(0).get("text");
 
         } catch (Exception e) {
-            context.getLogger().log("Error in research: " + e.getMessage());
+            context.getLogger().log("Claude research failed: " + e.getMessage());
             throw new RuntimeException(e);
         }
     }
