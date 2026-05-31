@@ -17,27 +17,31 @@ Submit any topic — technical, financial, scientific, historical. Sage decompos
 ---
 
 ## Architecture
+
+```
 POST /reports
-│
-▼
+     │
+     ▼
 API Gateway → Cognito Auth → Lambda (Orchestrator)
-│
-▼
-Step Functions: SagePipeline
-│
-├─ State 1: Decompose (Claude Haiku 4.5)
-│          topic → 3 sub-questions
-│
-├─ State 2: Research × 3 (parallel Map state)
-│          Claude Haiku 4.5 on each thread
-│
-├─ State 3: Generate Report (Claude Haiku 4.5)
-│          domain-aware structured brief
-│
-├─ State 4: Generate Images (S3)
-│
-└─ State 5: Persist → DynamoDB (status: COMPLETE)
+                                      │
+                                      ▼
+                          Step Functions: SagePipeline
+                          │
+                          ├─ State 1: Decompose (Claude Haiku 4.5)
+                          │          topic → 3 sub-questions
+                          │
+                          ├─ State 2: Research × 3 (parallel Map state)
+                          │          Claude Haiku 4.5 on each thread
+                          │
+                          ├─ State 3: Generate Report (Claude Haiku 4.5)
+                          │          domain-aware structured brief
+                          │
+                          ├─ State 4: Generate Images (S3)
+                          │
+                          └─ State 5: Persist → DynamoDB (status: COMPLETE)
+
 Frontend polls GET /reports/{id} every 3s until COMPLETE
+```
 ---
 
 ## AWS Services
@@ -55,12 +59,15 @@ Frontend polls GET /reports/{id} every 3s until COMPLETE
 ---
 
 ## Tech Stack
+
+```
 Backend   Java 25 · AWS SDK v2 · Maven · No Spring (pure Lambda handlers)
 Frontend  React 18 · Vite · Axios · Amazon Cognito Identity JS
 Auth      Cognito User Pools + API Gateway Authorizer
 Database  DynamoDB on-demand
 Pipeline  Step Functions Standard Workflow (ASL)
 AI        Claude Haiku 4.5 via Amazon Bedrock (us-east-1 inference profile)
+```
 ---
 
 ## Features
@@ -106,6 +113,7 @@ AI        Claude Haiku 4.5 via Amazon Bedrock (us-east-1 inference profile)
 
 ## Project Structure
 
+```
 sage-research-synthesizer/
 ├── lambdas/src/main/java/com/sage/
 │   ├── orchestrator/      POST /reports — validates, writes DynamoDB, starts pipeline
@@ -123,6 +131,8 @@ sage-research-synthesizer/
 │   └── config.js          AWS resource configuration
 └── step_functions/
 └── state_machine.json ASL pipeline definition
+```
+
 ---
 
 ## Running Locally
