@@ -11,6 +11,7 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.sfn.SfnClient;
 import software.amazon.awssdk.services.sfn.model.StartExecutionRequest;
 
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,7 +32,6 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
     private static final String STATE_MACHINE_ARN =
             "arn:aws:states:us-east-1:758854590072:stateMachine:SagePipeline";
 
-    // Vague single concepts that can't produce a focused report
     private static final List<String> VAGUE_TOPICS = List.of(
         "life", "everything", "nothing", "stuff", "things", "world",
         "universe", "reality", "existence", "society", "humans", "people",
@@ -40,32 +40,28 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
         "health", "food", "sports", "music", "art", "education"
     );
 
-    // Prefixes that make a vague topic look like a question but are still too broad
     private static final List<String> VAGUE_PREFIXES = List.of(
         "what is ", "tell me about ", "explain ", "describe ",
         "what are ", "talk about ", "write about "
     );
 
-    // Real-time data keywords
     private static final List<String> REALTIME_KEYWORDS = List.of(
         "stock price", "current price", "price today", "price now",
         "today's price", "live price", "market price right now",
         "current rate", "exchange rate today", "weather today",
-        "news today", "breaking news", "latest news", "right now",
-        "at this moment", "currently trading", "market cap today",
-        "score today", "result today", "live score"
+        "news today", "breaking news", "right now",
+        "currently trading", "market cap today",
+        "score today", "live score"
     );
 
-    // Personal advice keywords
     private static final List<String> PERSONAL_KEYWORDS = List.of(
         "should i", "should i take", "should i buy", "should i sell",
         "what should i do", "is it good for me", "help me decide",
         "my job offer", "my life", "my relationship", "my career path",
         "my investment", "my portfolio", "my salary negotiation",
-        "am i right to", "what do you think i should", "advise me personally"
+        "am i right to", "advise me personally"
     );
 
-    // Inappropriate content keywords - broad enough to catch variations
     private static final List<String> INAPPROPRIATE_KEYWORDS = List.of(
         "how to hack", "how to exploit",
         "make a bomb", "make bomb", "build a bomb", "build bomb",
@@ -73,17 +69,43 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
         "synthesize drugs", "drug synthesis", "how to make meth",
         "how to kill", "how to murder",
         "malware tutorial", "write malware", "create ransomware",
-        "ransomware", "how to attack a", "illegal weapons",
-        "weapon making", "how to make a gun illegally"
+        "ransomware", "illegal weapons", "weapon making"
     );
+
+    // Extract userId from JWT token
+    private String extractUserId(APIGatewayProxyRequestEvent event) {
+        try {
+            Map<String, Object> context = (Map<String, Object>) event.getRequestContext()
+                .getAuthorizer();
+            if (context != null && context.containsKey("claims")) {
+                Map<String, String> claims = (Map<String, String>) context.get("claims");
+                return claims.getOrDefault("sub", "anonymous");
+            }
+            // Fallback - decode JWT manually
+            String authHeader = event.getHeaders().get("Authorization");
+            if (authHeader != null) {
+                String[] parts = authHeader.split("\\.");
+                if (parts.length >= 2) {
+                    String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
+                    Map<String, Object> claims = mapper.readValue(payload, Map.class);
+                    return (String) claims.getOrDefault("sub", "anonymous");
+                }
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return "anonymous";
+    }
 
     @Override
     public APIGatewayProxyResponseEvent handleRequest(APIGatewayProxyRequestEvent event, Context context) {
         try {
             Map<String, String> body = mapper.readValue(event.getBody(), Map.class);
             String topic = body.get("topic");
+            String userId = extractUserId(event);
 
-            // Check 1 - topic must exist
+            context.getLogger().log("Request from userId: " + userId);
+
             if (topic == null || topic.isBlank()) {
                 return response(400, Map.of(
                     "error", "MISSING_TOPIC",
@@ -91,11 +113,9 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
                 ));
             }
 
-            // Trim and normalize
             topic = topic.trim();
             String topicLower = topic.toLowerCase();
 
-            // Check 2 - minimum length
             if (topic.length() < 10) {
                 return response(400, Map.of(
                     "error", "TOPIC_TOO_SHORT",
@@ -104,7 +124,6 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
                 ));
             }
 
-            // Check 3 - maximum length
             if (topic.length() > 400) {
                 return response(400, Map.of(
                     "error", "TOPIC_TOO_LONG",
@@ -113,8 +132,6 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
                 ));
             }
 
-            // Check 4 - reject vague topics
-            // Strip common prefixes and check the core subject
             String strippedTopic = topicLower;
             for (String prefix : VAGUE_PREFIXES) {
                 if (topicLower.startsWith(prefix)) {
@@ -138,19 +155,17 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
                 }
             }
 
-            // Check 5 - reject real-time data requests
             for (String keyword : REALTIME_KEYWORDS) {
                 if (topicLower.contains(keyword)) {
                     return response(400, Map.of(
                         "error", "REALTIME_DATA_REQUEST",
-                        "message", "Sage generates research reports from established knowledge and cannot provide live or real-time data.",
-                        "tip", "For live data use Bloomberg, Yahoo Finance, or Google News.",
-                        "suggestion", "Rephrase as a research question. Instead of 'Apple stock price today' try 'Apple business model and competitive position'"
+                        "message", "Sage researches topics using web search and established knowledge.",
+                        "tip", "For live prices use Bloomberg or Yahoo Finance.",
+                        "suggestion", "Rephrase as a research question instead."
                     ));
                 }
             }
 
-            // Check 6 - reject personal advice requests
             for (String keyword : PERSONAL_KEYWORDS) {
                 if (topicLower.contains(keyword)) {
                     return response(400, Map.of(
@@ -162,7 +177,6 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
                 }
             }
 
-            // Check 7 - reject inappropriate content
             for (String keyword : INAPPROPRIATE_KEYWORDS) {
                 if (topicLower.contains(keyword)) {
                     return response(400, Map.of(
@@ -178,6 +192,7 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
 
             Map<String, AttributeValue> item = new HashMap<>();
             item.put("reportId", AttributeValue.fromS(reportId));
+            item.put("userId", AttributeValue.fromS(userId));
             item.put("topic", AttributeValue.fromS(topic));
             item.put("status", AttributeValue.fromS("PENDING"));
 
@@ -188,7 +203,8 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
 
             String sfInput = mapper.writeValueAsString(Map.of(
                     "reportId", reportId,
-                    "topic", topic
+                    "topic", topic,
+                    "userId", userId
             ));
 
             sfnClient.startExecution(StartExecutionRequest.builder()
@@ -196,7 +212,7 @@ public class OrchestratorHandler implements RequestHandler<APIGatewayProxyReques
                     .input(sfInput)
                     .build());
 
-            context.getLogger().log("Started pipeline for reportId: " + reportId + " topic: " + topic);
+            context.getLogger().log("Started pipeline for reportId: " + reportId + " userId: " + userId);
 
             return response(200, Map.of(
                     "reportId", reportId,

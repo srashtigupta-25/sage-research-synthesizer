@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { signIn, signOut, isAuthenticated, getEmail } from './auth'
-import { submitReport, getReport, deleteReport } from './api'
+import { signIn, signUp, confirmSignUp, resendCode, signOut, isAuthenticated, getEmail } from './auth'
+import { submitReport, getReport, deleteReport, listReports } from './api'
 import './App.css'
 
 // ── Pipeline stages shown during generation ──────────────────────────────────
@@ -22,20 +22,49 @@ const STACK = [
 ]
 
 export default function App() {
-  const [screen, setScreen] = useState('landing') // landing | login | research | report | history
+  const [screen, setScreen] = useState('landing') // landing | login | signup | verify | research | report | history
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [authError, setAuthError] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
+  const [signupEmail, setSignupEmail] = useState('')
+  const [signupPassword, setSignupPassword] = useState('')
+  const [signupConfirm, setSignupConfirm] = useState('')
+  const [verifyEmail, setVerifyEmail] = useState('')
+  const [verifyCode, setVerifyCode] = useState('')
+  const [authSuccess, setAuthSuccess] = useState('')
   const [topic, setTopic] = useState('')
   const [topicError, setTopicError] = useState('')
   const [generating, setGenerating] = useState(false)
   const [stageIndex, setStageIndex] = useState(0)
   const [report, setReport] = useState(null)
   const [userEmail, setUserEmail] = useState('')
-  const [history, setHistory] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('sage_history') || '[]') } catch { return [] }
-  })
+  const [history, setHistory] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  // Load history from DynamoDB when user is on history screen
+  const loadHistory = async () => {
+    setHistoryLoading(true)
+    try {
+      const data = await listReports()
+      const dbReports = (data.reports || []).map(r => ({
+        reportId: r.reportId,
+        topic: r.topic,
+        generatedAt: r.generatedAt || new Date().toISOString(),
+        generationTime: r.generationTime || null
+      }))
+      setHistory(dbReports)
+      localStorage.setItem('sage_history', JSON.stringify(dbReports))
+    } catch (err) {
+      // Fallback to localStorage
+      try {
+        const local = JSON.parse(localStorage.getItem('sage_history') || '[]')
+        setHistory(local)
+      } catch { setHistory([]) }
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
   const [fatalError, setFatalError] = useState(null)
   const pollRef = useRef(null)
 
@@ -61,6 +90,67 @@ export default function App() {
       setAuthLoading(false)
     }
   }
+
+  const handleSignup = async (e) => {
+    e.preventDefault()
+    setAuthLoading(true)
+    setAuthError('')
+    if (signupPassword !== signupConfirm) {
+      setAuthError('Passwords do not match.')
+      setAuthLoading(false)
+      return
+    }
+    if (signupPassword.length < 8) {
+      setAuthError('Password must be at least 8 characters.')
+      setAuthLoading(false)
+      return
+    }
+    try {
+      const result = await signUp(signupEmail, signupPassword)
+      setVerifyEmail(signupEmail)
+      if (result.codeResent) {
+        setAuthSuccess('A new verification code has been sent to your email.')
+      } else {
+        setAuthSuccess('Account created! Check your email for the verification code.')
+      }
+      setScreen('verify')
+    } catch (err) {
+      setAuthError(err.message || 'Signup failed. Please try again.')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const handleVerify = async (e) => {
+    e.preventDefault()
+    setAuthLoading(true)
+    setAuthError('')
+    try {
+      await confirmSignUp(verifyEmail, verifyCode)
+      setAuthSuccess('Email verified! Please sign in.')
+      setScreen('login')
+      setEmail(verifyEmail)
+    } catch (err) {
+      setAuthError(err.message || 'Verification failed. Check your code.')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const handleResendCode = async () => {
+    try {
+      await resendCode(verifyEmail)
+      setAuthSuccess('New code sent to your email!')
+    } catch (err) {
+      setAuthError(err.message)
+    }
+  }
+
+
+
+
+
+
 
   const handleSignOut = () => {
     signOut()
@@ -196,6 +286,81 @@ export default function App() {
   // ── Screens ───────────────────────────────────────────────────────────────
   if (screen === 'landing') return <Landing onGetStarted={() => setScreen('login')} />
 
+  if (screen === 'signup') return (
+    <SignupScreen
+      email={signupEmail} setEmail={setSignupEmail}
+      password={signupPassword} setPassword={setSignupPassword}
+      confirm={signupConfirm} setConfirm={setSignupConfirm}
+      error={authError} success={authSuccess}
+      loading={authLoading}
+      onSubmit={handleSignup}
+      onLogin={() => { setAuthError(''); setAuthSuccess(''); setScreen('login') }}
+      onBack={() => setScreen('landing')}
+    />
+  )
+
+  if (screen === 'verify') return (
+    <VerifyScreen
+      email={verifyEmail}
+      code={verifyCode} setCode={setVerifyCode}
+      error={authError} success={authSuccess}
+      loading={authLoading}
+      onSubmit={handleVerify}
+      onResend={handleResendCode}
+      onBack={() => setScreen('login')}
+    />
+  )
+
+  if (screen === 'signup') return (
+    <SignupScreen
+      email={signupEmail} setEmail={setSignupEmail}
+      password={signupPassword} setPassword={setSignupPassword}
+      confirm={signupConfirm} setConfirm={setSignupConfirm}
+      error={authError} success={authSuccess}
+      loading={authLoading}
+      onSubmit={handleSignup}
+      onLogin={() => { setAuthError(''); setAuthSuccess(''); setScreen('login') }}
+      onBack={() => setScreen('landing')}
+    />
+  )
+
+  if (screen === 'verify') return (
+    <VerifyScreen
+      email={verifyEmail}
+      code={verifyCode} setCode={setVerifyCode}
+      error={authError} success={authSuccess}
+      loading={authLoading}
+      onSubmit={handleVerify}
+      onResend={handleResendCode}
+      onBack={() => setScreen('login')}
+    />
+  )
+
+  if (screen === 'signup') return (
+    <SignupScreen
+      email={signupEmail} setEmail={setSignupEmail}
+      password={signupPassword} setPassword={setSignupPassword}
+      confirm={signupConfirm} setConfirm={setSignupConfirm}
+      error={authError} success={authSuccess}
+      loading={authLoading}
+      onSubmit={handleSignup}
+      onLogin={() => { setAuthError(''); setAuthSuccess(''); setScreen('login') }}
+      onBack={() => setScreen('landing')}
+    />
+  )
+
+  if (screen === 'verify') return (
+    <VerifyScreen
+      email={verifyEmail}
+      code={verifyCode} setCode={setVerifyCode}
+      error={authError} success={authSuccess}
+      loading={authLoading}
+      onSubmit={handleVerify}
+      onResend={handleResendCode}
+      onBack={() => setScreen('login')}
+    />
+  )
+
   if (screen === 'login') return (
     <LoginScreen
       email={email} setEmail={setEmail}
@@ -203,6 +368,7 @@ export default function App() {
       error={authError} loading={authLoading}
       onSubmit={handleLogin}
       onBack={() => setScreen('landing')}
+      onSignup={() => { setAuthError(''); setAuthSuccess(''); setScreen('signup') }}
     />
   )
 
@@ -217,6 +383,8 @@ export default function App() {
   if (screen === 'history') return (
     <HistoryScreen
       history={history}
+      historyLoading={historyLoading}
+      onLoad={loadHistory}
       onBack={() => setScreen('research')}
       onSignOut={handleSignOut}
       onDelete={(reportId) => {
@@ -427,7 +595,7 @@ function Landing({ onGetStarted }) {
 }
 
 // ── Login Screen ──────────────────────────────────────────────────────────────
-function LoginScreen({ email, setEmail, password, setPassword, error, loading, onSubmit, onBack }) {
+function LoginScreen({ email, setEmail, password, setPassword, error, loading, onSubmit, onBack, onSignup }) {
   return (
     <div className="auth-screen">
       <div className="auth-bg" />
@@ -490,7 +658,107 @@ function LoginScreen({ email, setEmail, password, setPassword, error, loading, o
           Try Demo — instant access, no signup
         </button>
 
+        <div className="auth-switch">
+          Don't have an account?
+          <button className="auth-switch-btn" onClick={onSignup}>Sign up free</button>
+        </div>
+
         <button className="btn-back" onClick={onBack}>← Back to home</button>
+      </div>
+    </div>
+  )
+}
+
+// ── Signup Screen ─────────────────────────────────────────────────────────────
+function SignupScreen({ email, setEmail, password, setPassword, confirm, setConfirm, error, success, loading, onSubmit, onLogin, onBack }) {
+  return (
+    <div className="auth-screen">
+      <div className="auth-bg" />
+      <div className="auth-card">
+        <div className="auth-brand">
+          <div className="nav-logo-mark">S</div>
+          <div>
+            <span className="nav-wordmark">SAGE</span>
+            <span className="nav-wordmark-sub">AI RESEARCH</span>
+          </div>
+        </div>
+        <h2 className="auth-title">Create your account</h2>
+        <p className="auth-sub">Start researching any topic with AI-powered intelligence briefs</p>
+
+        <form className="auth-form" onSubmit={onSubmit}>
+          <div className="field">
+            <label className="field-label">Email</label>
+            <input className="field-input" type="email" value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="you@example.com" required />
+          </div>
+          <div className="field">
+            <label className="field-label">Password</label>
+            <input className="field-input" type="password" value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="Min. 8 characters" required />
+          </div>
+          <div className="field">
+            <label className="field-label">Confirm Password</label>
+            <input className="field-input" type="password" value={confirm}
+              onChange={e => setConfirm(e.target.value)}
+              placeholder="Repeat your password" required />
+          </div>
+          {error && <div className="auth-error">{error}</div>}
+          {success && <div className="auth-success">{success}</div>}
+          <button className="btn-primary btn-full" type="submit" disabled={loading}>
+            {loading ? <span className="btn-spinner" /> : 'Create Account'}
+          </button>
+        </form>
+
+        <div className="auth-switch">
+          Already have an account?
+          <button className="auth-switch-btn" onClick={onLogin}>Sign in</button>
+        </div>
+
+        <button className="btn-back" onClick={onBack}>← Back to home</button>
+      </div>
+    </div>
+  )
+}
+
+// ── Verify Screen ─────────────────────────────────────────────────────────────
+function VerifyScreen({ email, code, setCode, error, success, loading, onSubmit, onResend, onBack }) {
+  return (
+    <div className="auth-screen">
+      <div className="auth-bg" />
+      <div className="auth-card">
+        <div className="auth-brand">
+          <div className="nav-logo-mark">S</div>
+          <div>
+            <span className="nav-wordmark">SAGE</span>
+            <span className="nav-wordmark-sub">AI RESEARCH</span>
+          </div>
+        </div>
+        <div className="verify-icon">✉️</div>
+        <h2 className="auth-title">Check your email</h2>
+        <p className="auth-sub">We sent a 6-digit verification code to <strong>{email}</strong></p>
+
+        <form className="auth-form" onSubmit={onSubmit}>
+          <div className="field">
+            <label className="field-label">Verification Code</label>
+            <input className="field-input verify-input" type="text"
+              value={code} onChange={e => setCode(e.target.value)}
+              placeholder="123456" maxLength={6} required />
+          </div>
+          {error && <div className="auth-error">{error}</div>}
+          {success && <div className="auth-success">{success}</div>}
+          <button className="btn-primary btn-full" type="submit" disabled={loading}>
+            {loading ? <span className="btn-spinner" /> : 'Verify Email'}
+          </button>
+        </form>
+
+        <div className="auth-switch">
+          Didn't receive it?
+          <button className="auth-switch-btn" onClick={onResend}>Resend code</button>
+        </div>
+
+        <button className="btn-back" onClick={onBack}>← Back to sign in</button>
       </div>
     </div>
   )
@@ -623,8 +891,116 @@ function ResearchScreen({ topic, setTopic, error, setError, generating, stageInd
 }
 
 // ── Report Screen ─────────────────────────────────────────────────────────────
-function ReportScreen({ report, renderReport, onResearch, onSignOut, onHistory }) {
+function ReportScreen({ report, renderReport, onResearch, onSignOut, onHistory, onBack }) {
   const [copied, setCopied] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      const { jsPDF } = await import('jspdf')
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const margin = 20
+      const maxWidth = pageWidth - margin * 2
+      let y = margin
+
+      // Header
+      doc.setFillColor(8, 12, 20)
+      doc.rect(0, 0, pageWidth, 18, 'F')
+      doc.setTextColor(79, 158, 255)
+      doc.setFontSize(11)
+      doc.setFont('helvetica', 'bold')
+      doc.text('SAGE', margin, 12)
+      doc.setTextColor(150, 150, 170)
+      doc.setFontSize(8)
+      doc.setFont('helvetica', 'normal')
+      doc.text('AI RESEARCH SYNTHESIZER', margin + 14, 12)
+      doc.setTextColor(150, 150, 170)
+      doc.setFontSize(7)
+      doc.text(new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' }), pageWidth - margin, 12, { align: 'right' })
+      y = 30
+
+      // Topic
+      doc.setFillColor(15, 20, 35)
+      doc.rect(0, y - 8, pageWidth, 22, 'F')
+      doc.setTextColor(255, 255, 255)
+      doc.setFontSize(14)
+      doc.setFont('helvetica', 'bold')
+      const topicLines = doc.splitTextToSize(report.topic || 'Research Report', maxWidth)
+      doc.text(topicLines, margin, y)
+      y += topicLines.length * 7 + 10
+
+      // Stats
+      doc.setFillColor(20, 28, 48)
+      doc.rect(margin, y, maxWidth, 10, 'F')
+      doc.setTextColor(79, 158, 255)
+      doc.setFontSize(7)
+      const stats = [report.generationTime ? 'Generated in ' + report.generationTime + 's' : '', '3 parallel research threads', 'Claude Haiku 4.5 on Bedrock'].filter(Boolean).join('   ·   ')
+      doc.text(stats, margin + 4, y + 6.5)
+      y += 18
+
+      // Content
+      const sections = (report.reportText || '').split('\n\n')
+      for (const section of sections) {
+        if (!section.trim()) continue
+        const lines = section.split('\n')
+        const firstLine = lines[0].trim()
+        const isHeader = firstLine === firstLine.toUpperCase() && firstLine.length > 2 && !firstLine.includes('.')
+        if (isHeader) {
+          y += 4
+          doc.setTextColor(79, 158, 255)
+          doc.setFontSize(8)
+          doc.setFont('helvetica', 'bold')
+          doc.text(firstLine, margin, y)
+          y += 2
+          doc.setDrawColor(79, 158, 255)
+          doc.setLineWidth(0.3)
+          doc.line(margin, y, margin + 40, y)
+          y += 5
+          const bodyText = lines.slice(1).join('\n').trim()
+          if (bodyText) {
+            doc.setTextColor(40, 45, 65)
+            doc.setFontSize(9)
+            doc.setFont('helvetica', 'normal')
+            const bodyLines = doc.splitTextToSize(bodyText, maxWidth)
+            for (const bl of bodyLines) {
+              if (y > pageHeight - margin) { doc.addPage(); y = 20 }
+              doc.text(bl, margin, y)
+              y += 5
+            }
+          }
+        } else {
+          doc.setTextColor(40, 45, 65)
+          doc.setFontSize(9)
+          doc.setFont('helvetica', 'normal')
+          const paraLines = doc.splitTextToSize(section.trim(), maxWidth)
+          for (const pl of paraLines) {
+            if (y > pageHeight - margin) { doc.addPage(); y = 20 }
+            doc.text(pl, margin, y)
+            y += 5
+          }
+        }
+        y += 3
+      }
+
+      // Footer
+      doc.setFillColor(8, 12, 20)
+      doc.rect(0, pageHeight - 12, pageWidth, 12, 'F')
+      doc.setTextColor(100, 100, 120)
+      doc.setFontSize(7)
+      doc.text('Generated by Sage — AI Research Synthesizer', margin, pageHeight - 5)
+
+      const filename = (report.topic || 'sage-report').slice(0, 40).replace(/[^a-z0-9]/gi, '-').toLowerCase()
+      doc.save(filename + '.pdf')
+    } catch (err) {
+      console.error('PDF failed:', err)
+      alert('Could not generate PDF. Please try again.')
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   const wordCount = report.reportText?.split(/\s+/).length || 0
   const readTime = Math.ceil(wordCount / 200)
@@ -656,6 +1032,12 @@ Generated by Sage — AI Research Synthesizer`
           </div>
         </div>
         <div className="nav-right">
+          {onBack && (
+            <button className="btn-ghost btn-sm" onClick={onBack}>← Back</button>
+          )}
+          <button className="btn-ghost btn-sm" onClick={handleDownload} disabled={downloading}>
+            {downloading ? <span className="btn-spinner" style={{width:'12px',height:'12px',borderColor:'var(--border-light)',borderTopColor:'var(--accent)'}}/> : '↓ PDF'}
+          </button>
           <button className="btn-ghost btn-sm" onClick={handleCopy}>
             {copied ? '✓ Copied' : 'Copy Report'}
           </button>
@@ -770,7 +1152,8 @@ function FatalErrorScreen({ error, onRetry, onSignIn }) {
 }
 
 // ── History Screen ────────────────────────────────────────────────────────────
-function HistoryScreen({ history, onBack, onSignOut, onViewReport, onDelete }) {
+function HistoryScreen({ history, historyLoading, onLoad, onBack, onSignOut, onViewReport, onDelete }) {
+  useEffect(() => { onLoad() }, [])
   const [loading, setLoading] = useState(null)
   const [deleteConfirm, setDeleteConfirm] = useState(null) // reportId to confirm delete
   const [deleting, setDeleting] = useState(null)
@@ -831,7 +1214,12 @@ function HistoryScreen({ history, onBack, onSignOut, onViewReport, onDelete }) {
           </p>
         </div>
 
-        {history.length === 0 ? (
+        {historyLoading ? (
+          <div className="history-loading">
+            <span className="btn-spinner" style={{width:'20px',height:'20px',borderColor:'var(--border-light)',borderTopColor:'var(--accent)'}}/>
+            <span>Loading your reports from database...</span>
+          </div>
+        ) : history.length === 0 ? (
           <div className="history-empty">
             <div className="history-empty-icon">◇</div>
             <p>Your generated reports will appear here</p>

@@ -28,3 +28,9 @@ export const deleteReport = async (reportId) => {
   const res = await client.delete(`/reports/${reportId}`)
   return res.data
 }
+
+// List all reports for current user
+export const listReports = async () => {
+  const res = await client.get('/reports')
+  return res.data
+}
