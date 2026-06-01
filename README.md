@@ -4,7 +4,9 @@
 
 Sage takes any research topic and delivers a structured AI-generated intelligence brief in under 45 seconds — built on a fully serverless AWS pipeline.
 
-![Stack](https://img.shields.io/badge/Java-25-orange?style=flat-square) ![AWS](https://img.shields.io/badge/AWS-Serverless-FF9900?style=flat-square) ![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square) ![Bedrock](https://img.shields.io/badge/Claude-Haiku_4.5-6B48FF?style=flat-square)
+![Stack](https://img.shields.io/badge/Java-25-orange?style=flat-square) ![AWS](https://img.shields.io/badge/AWS-Serverless-FF9900?style=flat-square) ![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square) ![Bedrock](https://img.shields.io/badge/Claude-Haiku_4.5-6B48FF?style=flat-square) ![CloudFront](https://img.shields.io/badge/CloudFront-CDN-FF9900?style=flat-square)
+
+**🌐 Live Demo:** [https://d1kbvlvilht945.cloudfront.net](https://d1kbvlvilht945.cloudfront.net) · **GitHub:** [sage-research-synthesizer](https://github.com/srashtigupta-25/sage-research-synthesizer)
 
 ---
 
