@@ -8,6 +8,7 @@ Sage is a production-grade AI research platform that decomposes any topic into p
 
 **🌐 Live:** [https://d1kbvlvilht945.cloudfront.net](https://d1kbvlvilht945.cloudfront.net) · **Repo:** [sage-research-synthesizer](https://github.com/srashtigupta-25/sage-research-synthesizer)
 
+![Sage Report](./screenshots/report.png)
 ---
 
 ## What Sage Does
